@@ -13,14 +13,19 @@ st.set_page_config(
 CAFE_FILE = "cafes.csv"
 REVIEW_FILE = "reviews.csv"
 
-COFFEE_ICON_URL = "https://img.icons8.com/emoji/96/000000/hot-beverage.png"
+# ☕ 단정하고 깔끔한 모던 카페 아이콘 (원하시는 스타일로 URL 선택 가능)
+# [옵션 A] 에코 그린 톤의 단정한 커피잔 아이콘
+COFFEE_ICON_URL = "https://img.icons8.com/fluency-systems-filled/96/2E7D32/cafe.png"
+
+# [옵션 B] 다크 모던 픽토그램 아이콘을 원하시면 아래 주소의 주석(#)을 해제하고 사용해 주세요.
+# COFFEE_ICON_URL = "https://img.icons8.com/material-rounded/96/374151/cafe.png"
 
 # 데이터 불러오기
 def load_cafe_data():
     if os.path.exists(CAFE_FILE):
         df = pd.read_csv(CAFE_FILE)
         if "비밀번호" not in df.columns:
-            df["비밀번호"] = "1234"  # 기존 기본 데이터용 임시 비밀번호
+            df["비밀번호"] = "1234"
         return df
     return pd.DataFrame(columns=["카페명", "주소 (도로명 주소)", "위도", "경도", "할인 내용", "비밀번호"])
 
@@ -48,7 +53,7 @@ if not cafe_df.empty and "위도" in cafe_df.columns and "경도" in cafe_df.col
 st.title("🌱 eㅔ브리띵 에코 맵")
 st.caption("텀블러 할인 카페를 확인하고, 자유롭게 후기와 새 에코 스팟을 공유하세요!")
 
-# 탭 구성 (수정/삭제 관리 탭 추가)
+# 탭 구성
 tab1, tab2, tab3 = st.tabs(["🗺️ 에코 맵 대시보드", "➕ 카페 직접 추가", "🛠️ 등록 카페 수정/삭제"])
 
 # ==================== [TAB 1] 대시보드 및 후기 ====================
@@ -57,7 +62,7 @@ with tab1:
 
     with col_map:
         st.subheader("📍 서울 텀블러 할인 카페 지도")
-        st.caption("💡 지도 위 ☕ 커피잔 아이콘을 선택하거나 마우스를 올리면 할인 정보와 주소가 표시됩니다.")
+        st.caption("💡 지도 위 카페 아이콘에 마우스를 올리면 할인 정보와 주소가 표시됩니다.")
 
         valid_data = cafe_df.dropna(subset=["위도", "경도"]).copy()
 
@@ -69,12 +74,13 @@ with tab1:
                 pitch=0
             )
 
+            # 아이콘 레이어 (크기와 스케일을 단정하게 조정)
             icon_layer = pdk.Layer(
                 "IconLayer",
                 data=valid_data,
                 get_icon="icon_data",
-                get_size=4,
-                size_scale=10,
+                get_size=3.5,
+                size_scale=8,
                 get_position=["경도", "위도"],
                 pickable=True,
                 auto_highlight=True
@@ -157,7 +163,6 @@ with tab1:
                         st.write(f"**{r['작성자']}** ({r['평점']})")
                         st.caption(r["후기"])
                     with col_r2:
-                        # 삭제 토글 Popover
                         with st.popover("🗑️ 삭제"):
                             del_pwd = st.text_input("비밀번호 입력", type="password", key=f"del_pwd_{idx}")
                             if st.button("확인 및 삭제", key=f"del_btn_{idx}"):
@@ -213,7 +218,6 @@ with tab2:
 # ==================== [TAB 3] 카페 정보 수정/삭제 ====================
 with tab3:
     st.subheader("🛠️ 등록한 카페 정보 수정 및 삭제")
-    st.caption("본인이 직접 등록한 카페 정보를 수정하거나 삭제할 수 있습니다.")
 
     if not cafe_df.empty:
         target_cafe = st.selectbox("수정/삭제할 카페 선택", cafe_df["카페명"].tolist())
