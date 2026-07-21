@@ -13,6 +13,9 @@ st.set_page_config(
 CAFE_FILE = "cafes.csv"
 REVIEW_FILE = "reviews.csv"
 
+# 커피잔 아이콘 URL (투명 배경 이미지)
+COFFEE_ICON_URL = "https://img.icons8.com/emoji/96/000000/hot-beverage.png"
+
 # 데이터 로드
 def load_cafe_data():
     if os.path.exists(CAFE_FILE):
@@ -27,6 +30,15 @@ def load_review_data():
 cafe_df = load_cafe_data()
 review_df = load_review_data()
 
+# 아이콘 레이어에 필요한 icon_data 추가
+if not cafe_df.empty and "위도" in cafe_df.columns and "경도" in cafe_df.columns:
+    cafe_df["icon_data"] = [{
+        "url": COFFEE_ICON_URL,
+        "width": 128,
+        "height": 128,
+        "anchorY": 128
+    }] * len(cafe_df)
+
 # 타이틀
 st.title("🌱 eㅔ브리띵 에코 맵")
 st.caption("텀블러 할인 카페를 확인하고, 자유롭게 후기와 새 에코 스팟을 공유하세요!")
@@ -40,7 +52,7 @@ with tab1:
 
     with col_map:
         st.subheader("📍 서울 텀블러 할인 카페 지도")
-        st.caption("💡 지도 위 마커(아이콘)에 마우스를 올리면 할인 정보와 주소가 표시됩니다.")
+        st.caption("💡 지도 위 ☕ 커피잔 아이콘을 선택하거나 마우스를 올리면 할인 정보와 주소가 표시됩니다.")
 
         # 위도/경도가 있는 데이터 필터링
         valid_data = cafe_df.dropna(subset=["위도", "경도"]).copy()
@@ -50,36 +62,39 @@ with tab1:
             view_state = pdk.ViewState(
                 latitude=valid_data["위도"].mean(),
                 longitude=valid_data["경도"].mean(),
-                zoom=12,
+                zoom=12.5,
                 pitch=0
             )
 
-            # 지도 아이콘 마커 레이어
-            layer = pdk.Layer(
-                "ScatterplotLayer",
+            # ☕ 귀여운 커피잔 아이콘 마커 레이어
+            icon_layer = pdk.Layer(
+                "IconLayer",
                 data=valid_data,
+                get_icon="icon_data",
+                get_size=4,
+                size_scale=10,
                 get_position=["경도", "위도"],
-                get_color="[46, 125, 50, 200]",  # 에코 초록색 (RGB)
-                get_radius=120,
                 pickable=True,
                 auto_highlight=True
             )
 
-            # Pydeck 지도 렌더링 (마우스 오버 툴팁 설정)
+            # Pydeck 밝은 지도 타일 렌더링
             r = pdk.Deck(
-                layers=[layer],
+                map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",  # 밝고 화사한 라이트 지도 테마
+                layers=[icon_layer],
                 initial_view_state=view_state,
                 tooltip={
                     "html": "<b>☕ {카페명}</b><br/>"
                             "📍 주소: {주소 (도로명 주소)}<br/>"
                             "🎁 혜택: <span style='color:#2E7D32;'><b>{할인 내용}</b></span>",
                     "style": {
-                        "backgroundColor": "#ffffff",
-                        "color": "#333333",
+                        "backgroundColor": "#FFFFFF",
+                        "color": "#1F2937",
                         "fontSize": "14px",
-                        "padding": "10px",
-                        "borderRadius": "8px",
-                        "boxShadow": "0px 2px 6px rgba(0,0,0,0.3)"
+                        "padding": "12px",
+                        "borderRadius": "10px",
+                        "boxShadow": "0px 4px 12px rgba(0,0,0,0.15)",
+                        "border": "1px solid #E5E7EB"
                     }
                 }
             )
@@ -151,7 +166,7 @@ with tab2:
         new_address = st.text_input("도로명 주소 (예: 서울 용산구 청파로47길 78)")
         new_discount = st.text_input("할인 내용 (예: 텀블러 사용 시 300원 할인)")
 
-        st.markdown("📌 **지도 표시용 좌표** (좌표를 입력하면 지도 상에 마커가 표시됩니다)")
+        st.markdown("📌 **지도 표시용 좌표**")
         col_lat, col_lng = st.columns(2)
         with col_lat:
             new_lat = st.number_input("위도 (Latitude, 예: 37.540100)", value=37.550000, format="%.6f")
