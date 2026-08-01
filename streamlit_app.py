@@ -1,4 +1,6 @@
 import os
+import re
+import colorsys
 import pandas as pd
 import pydeck as pdk
 import streamlit as st
@@ -13,32 +15,57 @@ st.set_page_config(
 CAFE_FILE = "cafes.csv"
 REVIEW_FILE = "reviews.csv"
 
-# ☕ 단정하고 깔끔한 모던 카페 아이콘 (원하시는 스타일로 URL 선택 가능)
-# [옵션 A] 에코 그린 톤의 단정한 커피잔 아이콘
-COFFEE_ICON_URL = "https://img.icons8.com/fluency-systems-filled/96/2E7D32/cafe.png"
+# ☕ 단정하고 깔끔한 모던 카페 아이콘
+# 구별 색상을 입히기 위해 흰색 계열 아이콘 사용 (색상 tint가 제대로 보이려면 흰색이어야 함)
+COFFEE_ICON_URL = "https://img.icons8.com/ios-filled/100/ffffff/cafe.png"
 
-# [옵션 B] 다크 모던 픽토그램 아이콘을 원하시면 아래 주소의 주석(#)을 해제하고 사용해 주세요.
-# COFFEE_ICON_URL = "https://img.icons8.com/material-rounded/96/374151/cafe.png"
 
 # 데이터 불러오기
 def load_cafe_data():
     if os.path.exists(CAFE_FILE):
-        df = pd.read_csv(CAFE_FILE)
+        df = pd.read_csv(CAFE_FILE, encoding="utf-8-sig")
         if "비밀번호" not in df.columns:
             df["비밀번호"] = "1234"
         return df
     return pd.DataFrame(columns=["카페명", "주소 (도로명 주소)", "위도", "경도", "할인 내용", "비밀번호"])
 
+
 def load_review_data():
     if os.path.exists(REVIEW_FILE):
-        df = pd.read_csv(REVIEW_FILE)
+        df = pd.read_csv(REVIEW_FILE, encoding="utf-8-sig")
         if "비밀번호" not in df.columns:
             df["비밀번호"] = "1234"
         return df
     return pd.DataFrame(columns=["카페명", "작성자", "평점", "후기", "비밀번호"])
 
+
+# 주소에서 '구' 이름 추출 (예: "서울 동작구 상도로..." -> "동작구")
+def extract_gu(address):
+    match = re.search(r'(\S+구)', str(address))
+    return match.group(1) if match else "기타"
+
+
+# 구별로 서로 겹치지 않는 고유 색상을 자동 생성
+def generate_gu_colors(gu_names):
+    colors = {}
+    n = len(gu_names)
+    for i, gu in enumerate(sorted(gu_names)):
+        hue = i / max(n, 1)
+        r, g, b = colorsys.hsv_to_rgb(hue, 0.65, 0.85)
+        colors[gu] = [int(r * 255), int(g * 255), int(b * 255)]
+    return colors
+
+
 cafe_df = load_cafe_data()
 review_df = load_review_data()
+
+# 구 컬럼 및 색상 매핑 준비
+if not cafe_df.empty:
+    cafe_df["구"] = cafe_df["주소 (도로명 주소)"].apply(extract_gu)
+    GU_COLOR_MAP = generate_gu_colors(cafe_df["구"].unique())
+else:
+    cafe_df["구"] = pd.Series(dtype=str)
+    GU_COLOR_MAP = {}
 
 # 지도용 아이콘 데이터 추가
 if not cafe_df.empty and "위도" in cafe_df.columns and "경도" in cafe_df.columns:
@@ -58,23 +85,39 @@ tab1, tab2, tab3 = st.tabs(["🗺️ 에코 맵 대시보드", "➕ 카페 직�
 
 # ==================== [TAB 1] 대시보드 및 후기 ====================
 with tab1:
+    st.markdown("#### 🏙️ 구 선택")
+    gu_options = sorted(cafe_df["구"].unique()) if not cafe_df.empty else []
+    selected_gu = st.multiselect(
+        "지도에 표시할 구를 선택하세요 (비워두면 전체 표시)",
+        gu_options,
+        default=gu_options
+    )
+
+    # 선택된 구만 필터링 (아무것도 선택 안 하면 전체 표시)
+    cafe_df_view = cafe_df[cafe_df["구"].isin(selected_gu)] if selected_gu else cafe_df
+
     col_map, col_detail = st.columns([1.8, 1])
 
     with col_map:
         st.subheader("📍 서울 텀블러 할인 카페 지도")
-        st.caption("💡 지도 위 카페 아이콘에 마우스를 올리면 할인 정보와 주소가 표시됩니다.")
+        st.caption("💡 지도 위 카페 아이콘에 마우스를 올리면 할인 정보와 주소가 표시됩니다. 색상은 구를 나타냅니다.")
 
-        valid_data = cafe_df.dropna(subset=["위도", "경도"]).copy()
+        valid_data = cafe_df_view.dropna(subset=["위도", "경도"]).copy()
 
         if not valid_data.empty:
+            # 구별 색상 매핑 (해당 구 색상이 없으면 회색으로 기본 처리)
+            valid_data["color"] = valid_data["구"].map(GU_COLOR_MAP).apply(
+                lambda c: c if isinstance(c, list) else [150, 150, 150]
+            )
+
             view_state = pdk.ViewState(
                 latitude=valid_data["위도"].mean(),
                 longitude=valid_data["경도"].mean(),
-                zoom=12.5,
+                zoom=11.5,
                 pitch=0
             )
 
-            # 아이콘 레이어 (크기와 스케일을 단정하게 조정)
+            # 아이콘 레이어 (구별 색상 적용)
             icon_layer = pdk.Layer(
                 "IconLayer",
                 data=valid_data,
@@ -82,6 +125,7 @@ with tab1:
                 get_size=3.5,
                 size_scale=8,
                 get_position=["경도", "위도"],
+                get_color="color",
                 pickable=True,
                 auto_highlight=True
             )
@@ -92,7 +136,7 @@ with tab1:
                 initial_view_state=view_state,
                 tooltip={
                     "html": "<b>☕ {카페명}</b><br/>"
-                            "📍 주소: {주소 (도로명 주소)}<br/>"
+                            "📍 {구} · {주소 (도로명 주소)}<br/>"
                             "🎁 혜택: <span style='color:#2E7D32;'><b>{할인 내용}</b></span>",
                     "style": {
                         "backgroundColor": "#FFFFFF",
@@ -107,13 +151,24 @@ with tab1:
             )
 
             st.pydeck_chart(r, use_container_width=True)
+
+            # 범례 (구별 색상 표시)
+            st.markdown("**🎨 구별 색상**")
+            legend_cols = st.columns(6)
+            for i, gu in enumerate(sorted(GU_COLOR_MAP.keys())):
+                if gu in selected_gu:
+                    c = GU_COLOR_MAP[gu]
+                    legend_cols[i % 6].markdown(
+                        f"<span style='color:rgb({c[0]},{c[1]},{c[2]});font-size:20px;'>●</span> {gu}",
+                        unsafe_allow_html=True
+                    )
         else:
-            st.info("지도에 표시할 데이터가 없습니다.")
+            st.info("지도에 표시할 데이터가 없습니다. 구 선택을 확인해주세요.")
 
     with col_detail:
         st.subheader("☕ 카페 상세 정보 및 후기")
 
-        cafe_list = cafe_df["카페명"].dropna().tolist() if not cafe_df.empty else []
+        cafe_list = cafe_df_view["카페명"].dropna().tolist() if not cafe_df_view.empty else []
 
         if cafe_list:
             selected_cafe = st.selectbox("지점(카페) 선택", cafe_list)
@@ -121,6 +176,7 @@ with tab1:
             info = cafe_df[cafe_df["카페명"] == selected_cafe].iloc[0]
 
             st.markdown(f"### **{info['카페명']}**")
+            st.markdown(f"🏙️ **구:** {info['구']}")
             st.markdown(f"📍 **주소:** {info['주소 (도로명 주소)']}")
             st.success(f"🎁 **할인 혜택:** {info['할인 내용']}")
 
@@ -146,7 +202,7 @@ with tab1:
                             "비밀번호": str(password)
                         }])
                         review_df = pd.concat([review_df, new_rev], ignore_index=True)
-                        review_df.to_csv(REVIEW_FILE, index=False)
+                        review_df.to_csv(REVIEW_FILE, index=False, encoding="utf-8-sig")
                         st.success("후기가 등록되었습니다!")
                         st.rerun()
                     else:
@@ -168,7 +224,7 @@ with tab1:
                             if st.button("확인 및 삭제", key=f"del_btn_{idx}"):
                                 if str(del_pwd) == str(r.get("비밀번호")):
                                     review_df = review_df.drop(idx)
-                                    review_df.to_csv(REVIEW_FILE, index=False)
+                                    review_df.to_csv(REVIEW_FILE, index=False, encoding="utf-8-sig")
                                     st.success("후기가 삭제되었습니다!")
                                     st.rerun()
                                 else:
@@ -176,6 +232,8 @@ with tab1:
                     st.divider()
             else:
                 st.info("아직 등록된 후기가 없습니다. 첫 후기를 올려보세요!")
+        else:
+            st.info("선택된 구에 표시할 카페가 없습니다.")
 
 # ==================== [TAB 2] 위치 직접 추가 ====================
 with tab2:
@@ -208,7 +266,7 @@ with tab2:
                 }])
 
                 cafe_df = pd.concat([cafe_df, new_data], ignore_index=True)
-                cafe_df.to_csv(CAFE_FILE, index=False)
+                cafe_df.to_csv(CAFE_FILE, index=False, encoding="utf-8-sig")
 
                 st.success(f"'{new_name}' 카페가 성공적으로 등록되었습니다!")
                 st.rerun()
@@ -246,7 +304,7 @@ with tab3:
                         cafe_df.at[target_idx, "할인 내용"] = edit_discount
                         cafe_df.at[target_idx, "위도"] = edit_lat
                         cafe_df.at[target_idx, "경도"] = edit_lng
-                        cafe_df.to_csv(CAFE_FILE, index=False)
+                        cafe_df.to_csv(CAFE_FILE, index=False, encoding="utf-8-sig")
                         st.success("카페 정보가 수정되었습니다!")
                         st.rerun()
                     else:
@@ -258,7 +316,7 @@ with tab3:
             if st.button("카페 완전 삭제하기", type="primary"):
                 if str(input_pwd) == str(target_info.get("비밀번호")):
                     cafe_df = cafe_df.drop(target_idx)
-                    cafe_df.to_csv(CAFE_FILE, index=False)
+                    cafe_df.to_csv(CAFE_FILE, index=False, encoding="utf-8-sig")
                     st.success(f"'{target_cafe}' 카페가 삭제되었습니다.")
                     st.rerun()
                 else:
