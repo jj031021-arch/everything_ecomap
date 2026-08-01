@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import colorsys
 import pandas as pd
 import pydeck as pdk
@@ -14,10 +15,10 @@ st.set_page_config(
 
 CAFE_FILE = "cafes.csv"
 REVIEW_FILE = "reviews.csv"
+GEOJSON_FILE = "seoul_districts.geojson"  # 서울 25개 구 경계 데이터
 
-# ☕ 단정하고 깔끔한 모던 카페 아이콘
-# 구별 색상을 입히기 위해 흰색 계열 아이콘 사용 (색상 tint가 제대로 보이려면 흰색이어야 함)
-COFFEE_ICON_URL = "https://img.icons8.com/ios-filled/100/ffffff/cafe.png"
+# ☕ 단정하고 깔끔한 모던 카페 아이콘 (배경이 색으로 채워지므로 어두운 톤으로 대비)
+COFFEE_ICON_URL = "https://img.icons8.com/ios-filled/100/1f2937/cafe.png"
 
 
 # 데이터 불러오기
@@ -45,27 +46,50 @@ def extract_gu(address):
     return match.group(1) if match else "기타"
 
 
-# 구별로 서로 겹치지 않는 고유 색상을 자동 생성
-def generate_gu_colors(gu_names):
-    colors = {}
+# 구별로 서로 겹치지 않는 연한 배경색(채우기용)과 살짝 진한 경계선 색을 자동 생성
+def generate_district_colors(gu_names):
+    fill_map = {}
+    line_map = {}
     n = len(gu_names)
     for i, gu in enumerate(sorted(gu_names)):
         hue = i / max(n, 1)
-        r, g, b = colorsys.hsv_to_rgb(hue, 0.65, 0.85)
-        colors[gu] = [int(r * 255), int(g * 255), int(b * 255)]
-    return colors
+        # 배경용: 채도 낮고 명도 높은 파스텔 톤 + 반투명(alpha)
+        fr, fg, fb = colorsys.hsv_to_rgb(hue, 0.35, 0.97)
+        fill_map[gu] = [int(fr * 255), int(fg * 255), int(fb * 255), 140]
+        # 경계선용: 같은 색조를 살짝 더 진하게
+        lr, lg, lb = colorsys.hsv_to_rgb(hue, 0.45, 0.75)
+        line_map[gu] = [int(lr * 255), int(lg * 255), int(lb * 255), 200]
+    return fill_map, line_map
+
+
+def load_seoul_geojson():
+    if os.path.exists(GEOJSON_FILE):
+        with open(GEOJSON_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    return None
 
 
 cafe_df = load_cafe_data()
 review_df = load_review_data()
+seoul_geojson = load_seoul_geojson()
 
-# 구 컬럼 및 색상 매핑 준비
+# 구 컬럼 준비
 if not cafe_df.empty:
     cafe_df["구"] = cafe_df["주소 (도로명 주소)"].apply(extract_gu)
-    GU_COLOR_MAP = generate_gu_colors(cafe_df["구"].unique())
 else:
     cafe_df["구"] = pd.Series(dtype=str)
-    GU_COLOR_MAP = {}
+
+# geojson에 있는 25개 구 전체를 기준으로 색상 생성 (카페 유무와 무관하게 항상 동일한 색 배정)
+if seoul_geojson:
+    all_gu_names = [f["properties"]["name"] for f in seoul_geojson["features"]]
+    FILL_COLOR_MAP, LINE_COLOR_MAP = generate_district_colors(all_gu_names)
+    # 각 폴리곤 feature에 색상 정보를 미리 심어둠 (pydeck에서 properties.xxx 로 참조)
+    for feature in seoul_geojson["features"]:
+        gu_name = feature["properties"]["name"]
+        feature["properties"]["fill_color"] = FILL_COLOR_MAP.get(gu_name, [200, 200, 200, 120])
+        feature["properties"]["line_color"] = LINE_COLOR_MAP.get(gu_name, [150, 150, 150, 200])
+else:
+    FILL_COLOR_MAP, LINE_COLOR_MAP = {}, {}
 
 # 지도용 아이콘 데이터 추가
 if not cafe_df.empty and "위도" in cafe_df.columns and "경도" in cafe_df.columns:
@@ -105,11 +129,6 @@ with tab1:
         valid_data = cafe_df_view.dropna(subset=["위도", "경도"]).copy()
 
         if not valid_data.empty:
-            # 구별 색상 매핑 (해당 구 색상이 없으면 회색으로 기본 처리)
-            valid_data["color"] = valid_data["구"].map(GU_COLOR_MAP).apply(
-                lambda c: c if isinstance(c, list) else [150, 150, 150]
-            )
-
             view_state = pdk.ViewState(
                 latitude=valid_data["위도"].mean(),
                 longitude=valid_data["경도"].mean(),
@@ -117,7 +136,29 @@ with tab1:
                 pitch=0
             )
 
-            # 아이콘 레이어 (구별 색상 적용)
+            layers = []
+
+            # 구 경계 배경색 레이어 (선택된 구만 연하게 채워 표시)
+            if seoul_geojson:
+                filtered_features = [
+                    f for f in seoul_geojson["features"]
+                    if f["properties"]["name"] in selected_gu
+                ]
+                filtered_geojson = {"type": "FeatureCollection", "features": filtered_features}
+
+                district_layer = pdk.Layer(
+                    "GeoJsonLayer",
+                    data=filtered_geojson,
+                    stroked=True,
+                    filled=True,
+                    get_fill_color="properties.fill_color",
+                    get_line_color="properties.line_color",
+                    line_width_min_pixels=1.5,
+                    pickable=False,
+                )
+                layers.append(district_layer)
+
+            # 아이콘 레이어 (카페 위치)
             icon_layer = pdk.Layer(
                 "IconLayer",
                 data=valid_data,
@@ -125,14 +166,14 @@ with tab1:
                 get_size=3.5,
                 size_scale=8,
                 get_position=["경도", "위도"],
-                get_color="color",
                 pickable=True,
                 auto_highlight=True
             )
+            layers.append(icon_layer)
 
             r = pdk.Deck(
                 map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-                layers=[icon_layer],
+                layers=layers,
                 initial_view_state=view_state,
                 tooltip={
                     "html": "<b>☕ {카페명}</b><br/>"
@@ -152,18 +193,24 @@ with tab1:
 
             st.pydeck_chart(r, use_container_width=True)
 
-            # 범례 (구별 색상 표시)
-            st.markdown("**🎨 구별 색상**")
-            legend_cols = st.columns(6)
-            for i, gu in enumerate(sorted(GU_COLOR_MAP.keys())):
-                if gu in selected_gu:
-                    c = GU_COLOR_MAP[gu]
-                    legend_cols[i % 6].markdown(
-                        f"<span style='color:rgb({c[0]},{c[1]},{c[2]});font-size:20px;'>●</span> {gu}",
-                        unsafe_allow_html=True
-                    )
+            # 범례 (구별 배경색 표시)
+            if FILL_COLOR_MAP:
+                st.markdown("**🎨 구별 배경 색상**")
+                legend_cols = st.columns(6)
+                for i, gu in enumerate(sorted(FILL_COLOR_MAP.keys())):
+                    if gu in selected_gu:
+                        c = FILL_COLOR_MAP[gu]
+                        legend_cols[i % 6].markdown(
+                            f"<span style='color:rgba({c[0]},{c[1]},{c[2]},1);font-size:20px;'>■</span> {gu}",
+                            unsafe_allow_html=True
+                        )
         else:
             st.info("지도에 표시할 데이터가 없습니다. 구 선택을 확인해주세요.")
+
+        if not seoul_geojson:
+            st.warning(
+                f"⚠️ 구 배경색을 표시하려면 `{GEOJSON_FILE}` 파일이 앱과 같은 폴더(GitHub 저장소)에 있어야 합니다."
+            )
 
     with col_detail:
         st.subheader("☕ 카페 상세 정보 및 후기")
