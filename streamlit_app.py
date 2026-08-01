@@ -17,8 +17,8 @@ CAFE_FILE = "cafes.csv"
 REVIEW_FILE = "reviews.csv"
 GEOJSON_FILE = "seoul_districts.geojson"  # 서울 25개 구 경계 데이터
 
-# ☕ 단정하고 깔끔한 모던 카페 아이콘 (배경이 색으로 채워지므로 어두운 톤으로 대비)
-COFFEE_ICON_URL = "https://img.icons8.com/ios-filled/100/1f2937/cafe.png"
+# ☕ 단정하고 깔끔한 모던 카페 아이콘 (흰색)
+COFFEE_ICON_URL = "https://img.icons8.com/ios-filled/100/ffffff/cafe.png"
 
 
 # 데이터 불러오기
